@@ -181,6 +181,10 @@ generate_sdk_framework(MetalKit
 if (BUILD_METAL)
 	add_dependencies(Metal mslc)
 	target_include_directories(Metal PRIVATE ${MSLC_PUBLIC_INCLUDE_DIRS})
+else()
+	# MTLDevice.mm declares the loader's view of mslc's C API from <mslc/mslc.h> whether or not mslc is built
+	# (it is loaded with dlopen, and source compilation is reported unsupported without it)
+	target_include_directories(Metal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/deps/mslc/include)
 endif()
 
 add_framework(MetalKit
