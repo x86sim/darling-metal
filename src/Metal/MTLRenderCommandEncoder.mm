@@ -5,11 +5,13 @@
 #import <Metal/stubs.h>
 #import <Metal/MTLTextureInternal.h>
 #import <Metal/MTLBufferInternal.h>
+#import <Metal/MTLCountersInternal.h>
 #import <Metal/MTLDevice.h>
 #import <Metal/MTLRenderPipelineInternal.h>
 #import <Metal/MTLTypesInternal.h>
 #import <Metal/MTLSamplerStateInternal.h>
 #import <Metal/MTLFenceInternal.h>
+#import <Metal/MTLResourceInternal.h>
 #import <Metal/MTLDepthStencilDescriptorInternal.h>
 
 #include <map>
@@ -385,6 +387,134 @@ MTL_UNSUPPORTED_CLASS
 
 @end
 
+@implementation MTLRenderPassSampleBufferAttachmentDescriptor
+
+#if DARLING_METAL_ENABLED
+
+@synthesize sampleBuffer = _sampleBuffer;
+@synthesize startOfVertexSampleIndex = _startOfVertexSampleIndex;
+@synthesize endOfVertexSampleIndex = _endOfVertexSampleIndex;
+@synthesize startOfFragmentSampleIndex = _startOfFragmentSampleIndex;
+@synthesize endOfFragmentSampleIndex = _endOfFragmentSampleIndex;
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_startOfVertexSampleIndex = MTLCounterDontSample;
+		_endOfVertexSampleIndex = MTLCounterDontSample;
+		_startOfFragmentSampleIndex = MTLCounterDontSample;
+		_endOfFragmentSampleIndex = MTLCounterDontSample;
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[(id)_sampleBuffer release];
+	[super dealloc];
+}
+
+- (id)copyWithZone: (NSZone*)zone
+{
+	MTLRenderPassSampleBufferAttachmentDescriptor* copy = [[MTLRenderPassSampleBufferAttachmentDescriptor allocWithZone: zone] init];
+	copy.sampleBuffer = _sampleBuffer;
+	copy.startOfVertexSampleIndex = _startOfVertexSampleIndex;
+	copy.endOfVertexSampleIndex = _endOfVertexSampleIndex;
+	copy.startOfFragmentSampleIndex = _startOfFragmentSampleIndex;
+	copy.endOfFragmentSampleIndex = _endOfFragmentSampleIndex;
+	return copy;
+}
+
+#else
+
+@dynamic sampleBuffer;
+@dynamic startOfVertexSampleIndex;
+@dynamic endOfVertexSampleIndex;
+@dynamic startOfFragmentSampleIndex;
+@dynamic endOfFragmentSampleIndex;
+
+MTL_UNSUPPORTED_CLASS
+
+#endif
+
+@end
+
+@implementation MTLRenderPassSampleBufferAttachmentDescriptorArray
+
+#if DARLING_METAL_ENABLED
+
+{
+	NSMutableDictionary<NSNumber*, MTLRenderPassSampleBufferAttachmentDescriptor*>* _dict;
+}
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_dict = [NSMutableDictionary new];
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[_dict release];
+	[super dealloc];
+}
+
+- (MTLRenderPassSampleBufferAttachmentDescriptor*)objectAtIndexedSubscript: (NSUInteger)index
+{
+	if (!_dict[@(index)]) {
+		_dict[@(index)] = [[MTLRenderPassSampleBufferAttachmentDescriptor new] autorelease];
+	}
+	return [[_dict[@(index)] retain] autorelease];
+}
+
+-    (void)setObject: (MTLRenderPassSampleBufferAttachmentDescriptor*)desc
+  atIndexedSubscript: (NSUInteger)index
+{
+	if (desc == nil) {
+		[_dict removeObjectForKey: @(index)];
+	} else {
+		_dict[@(index)] = desc;
+	}
+}
+
+- (id)copyWithZone: (NSZone*)zone
+{
+	MTLRenderPassSampleBufferAttachmentDescriptorArray* copy = [[MTLRenderPassSampleBufferAttachmentDescriptorArray allocWithZone: zone] init];
+	[_dict enumerateKeysAndObjectsUsingBlock: ^(NSNumber* key, MTLRenderPassSampleBufferAttachmentDescriptor* value, BOOL* stop) {
+		copy->_dict[key] = [[value copy] autorelease];
+	}];
+	return copy;
+}
+
+- (std::unordered_map<size_t, Indium::RenderPassSampleBufferAttachmentDescriptor>)asIndiumAttachments
+{
+	__block std::unordered_map<size_t, Indium::RenderPassSampleBufferAttachmentDescriptor> result;
+	[_dict enumerateKeysAndObjectsUsingBlock: ^(NSNumber* key, MTLRenderPassSampleBufferAttachmentDescriptor* value, BOOL* stop) {
+		if (value.sampleBuffer != nil) {
+			result[key.unsignedIntegerValue] = Indium::RenderPassSampleBufferAttachmentDescriptor {
+				MTLCounterSampleBufferGetIndium(value.sampleBuffer),
+				value.startOfVertexSampleIndex,
+				value.endOfVertexSampleIndex,
+				value.startOfFragmentSampleIndex,
+				value.endOfFragmentSampleIndex,
+			};
+		}
+	}];
+	return result;
+}
+
+#else
+
+MTL_UNSUPPORTED_CLASS
+
+#endif
+
+@end
+
 @implementation MTLRenderPassDescriptor
 
 #if DARLING_METAL_ENABLED
@@ -412,6 +542,7 @@ MTL_UNSUPPORTED_CLASS
 - (void)_doInit
 {
 	_colorAttachments = [MTLRenderPassColorAttachmentDescriptorArray new];
+	_sampleBufferAttachments = [MTLRenderPassSampleBufferAttachmentDescriptorArray new];
 }
 
 // Like the color attachments, the depth and stencil attachment descriptors always exist, so
@@ -474,7 +605,8 @@ MTL_UNSUPPORTED_CLASS
 	copy.tileHeight = _tileHeight;
 	copy.defaultRasterSampleCount = _defaultRasterSampleCount;
 	copy.rasterizationRateMap = _rasterizationRateMap;
-	// TODO: sampleBufferAttachments
+	[copy->_sampleBufferAttachments release];
+	copy->_sampleBufferAttachments = [_sampleBufferAttachments copy];
 }
 
 - (instancetype)copyWithZone: (NSZone*)zone
@@ -540,7 +672,7 @@ MTL_UNSUPPORTED_CLASS
 		_renderTargetWidth,
 		_renderTargetHeight,
 		nullptr, // TODO
-		nullptr, // TODO
+		[_sampleBufferAttachments asIndiumAttachments],
 		{}, // TODO
 	};
 }
@@ -578,6 +710,13 @@ MTL_UNSUPPORTED_CLASS
 //
 // overridden methods
 //
+
+- (void)sampleCountersInBuffer: (id<MTLCounterSampleBuffer>)sampleBuffer
+                 atSampleIndex: (NSUInteger)sampleIndex
+                   withBarrier: (BOOL)barrier
+{
+	_encoder->sampleCounters(MTLCounterSampleBufferGetIndium(sampleBuffer), sampleIndex, barrier);
+}
 
 - (void)endEncoding
 {
@@ -1004,33 +1143,44 @@ MTL_UNSUPPORTED_CLASS
 	_encoder->drawIndexedPrimitives(static_cast<Indium::PrimitiveType>(primitiveType), static_cast<Indium::IndexType>(indexType), MTLBufferGetIndium(indexBuffer), indexBufferOffset, MTLBufferGetIndium(indirectBuffer), indirectBufferOffset);
 }
 
-// Every resource is resident for the GPU, so telling the encoder which ones the commands use changes nothing.
-// What the application bound or put in a buffer still has to be alive until the command buffer completes, as
-// with Metal, since a resource is only kept alive by the encoder when it is bound.
+// Every resource is resident for the GPU, so the residency itself needs nothing. What the draws that follow reach
+// through an argument buffer or a heap is not visible to Indium, so it is declared to the encoder, which orders
+// the work that uses those resources. A resource that is not tracked gets no ordering from it.
 - (void)useResource: (id<MTLResource>)resource
               usage: (MTLResourceUsage)usage
 {
+	if (auto indiumResource = MTLResourceGetIndium(resource)) {
+		_encoder->useResource(std::move(indiumResource), static_cast<Indium::ResourceUsage>(usage));
+	}
 }
 
 - (void)useResources: (const id<MTLResource> __nonnull [__nonnull])resources
                count: (NSUInteger)count
                usage: (MTLResourceUsage)usage
 {
+	_encoder->useResources(MTLResourcesGetIndium(resources, count), static_cast<Indium::ResourceUsage>(usage));
 }
 
 - (void)useHeap: (id<MTLHeap>)heap
 {
+	if (auto& indiumHeap = MTLHeapGetIndium(heap)) {
+		_encoder->useHeap(indiumHeap);
+	}
 }
 
 - (void)useHeaps: (const id<MTLHeap> __nonnull [__nonnull])heaps
            count: (NSUInteger)count
 {
+	_encoder->useHeaps(MTLHeapsGetIndium(heaps, count));
 }
 
 - (void)useResource: (id<MTLResource>)resource
               usage: (MTLResourceUsage)usage
              stages: (MTLRenderStages)stages
 {
+	if (auto indiumResource = MTLResourceGetIndium(resource)) {
+		_encoder->useResource(std::move(indiumResource), static_cast<Indium::ResourceUsage>(usage), static_cast<Indium::RenderStages>(stages));
+	}
 }
 
 - (void)useResources: (const id<MTLResource> __nonnull [__nonnull])resources
@@ -1038,17 +1188,22 @@ MTL_UNSUPPORTED_CLASS
                usage: (MTLResourceUsage)usage
               stages: (MTLRenderStages)stages
 {
+	_encoder->useResources(MTLResourcesGetIndium(resources, count), static_cast<Indium::ResourceUsage>(usage), static_cast<Indium::RenderStages>(stages));
 }
 
 - (void)useHeap: (id<MTLHeap>)heap
          stages: (MTLRenderStages)stages
 {
+	if (auto& indiumHeap = MTLHeapGetIndium(heap)) {
+		_encoder->useHeap(indiumHeap, static_cast<Indium::RenderStages>(stages));
+	}
 }
 
 - (void)useHeaps: (const id<MTLHeap> __nonnull [__nonnull])heaps
            count: (NSUInteger)count
           stages: (MTLRenderStages)stages
 {
+	_encoder->useHeaps(MTLHeapsGetIndium(heaps, count), static_cast<Indium::RenderStages>(stages));
 }
 
 #else

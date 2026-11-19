@@ -6,14 +6,26 @@
 #import <Metal/MTLTypesInternal.h>
 #import <Metal/MTLComputePipelineInternal.h>
 #import <Metal/MTLBufferInternal.h>
+#import <Metal/MTLCountersInternal.h>
 #import <Metal/MTLTextureInternal.h>
 #import <Metal/MTLSamplerStateInternal.h>
 #import <Metal/MTLFenceInternal.h>
+#import <Metal/MTLResourceInternal.h>
 #import <Metal/stubs.h>
 
 @implementation MTLComputePassSampleBufferAttachmentDescriptor
 
 #if DARLING_METAL_ENABLED
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		self.startOfEncoderSampleIndex = MTLCounterDontSample;
+		self.endOfEncoderSampleIndex = MTLCounterDontSample;
+	}
+	return self;
+}
 
 - (id)copyWithZone: (NSZone*)zone
 {
@@ -86,7 +98,26 @@ MTL_UNSUPPORTED_CLASS
 -    (void)setObject: (MTLComputePassSampleBufferAttachmentDescriptor*)desc
   atIndexedSubscript: (NSUInteger)index
 {
-	_dict[@(index)] = desc;
+	if (desc == nil) {
+		[_dict removeObjectForKey: @(index)];
+	} else {
+		_dict[@(index)] = desc;
+	}
+}
+
+- (std::unordered_map<size_t, Indium::ComputePassSampleBufferAttachmentDescriptor>)asIndiumAttachments
+{
+	__block std::unordered_map<size_t, Indium::ComputePassSampleBufferAttachmentDescriptor> result;
+	[_dict enumerateKeysAndObjectsUsingBlock: ^(NSNumber* key, MTLComputePassSampleBufferAttachmentDescriptor* value, BOOL* stop) {
+		if (value.sampleBuffer != nil) {
+			result[key.unsignedIntegerValue] = Indium::ComputePassSampleBufferAttachmentDescriptor {
+				MTLCounterSampleBufferGetIndium(value.sampleBuffer),
+				value.startOfEncoderSampleIndex,
+				value.endOfEncoderSampleIndex,
+			};
+		}
+	}];
+	return result;
 }
 
 #else
@@ -139,7 +170,8 @@ MTL_UNSUPPORTED_CLASS
 {
 	MTLComputePassDescriptor* copy = [[MTLComputePassDescriptor alloc] init];
 	copy.dispatchType = self.dispatchType;
-	_sampleBufferAttachments = [_sampleBufferAttachments copy];
+	[copy->_sampleBufferAttachments release];
+	copy->_sampleBufferAttachments = [_sampleBufferAttachments copy];
 	return copy;
 }
 
@@ -161,7 +193,7 @@ MTL_UNSUPPORTED_CLASS
 - (Indium::ComputePassDescriptor)asIndiumDescriptor
 {
 	return Indium::ComputePassDescriptor {
-		{}, // TODO
+		[_sampleBufferAttachments asIndiumAttachments],
 		static_cast<Indium::DispatchType>(_dispatchType),
 	};
 }
@@ -197,6 +229,13 @@ MTL_UNSUPPORTED_CLASS
 	[_device release];
 	[_label release];
 	[super dealloc];
+}
+
+- (void)sampleCountersInBuffer: (id<MTLCounterSampleBuffer>)sampleBuffer
+                 atSampleIndex: (NSUInteger)sampleIndex
+                   withBarrier: (BOOL)barrier
+{
+	_encoder->sampleCounters(MTLCounterSampleBufferGetIndium(sampleBuffer), sampleIndex, barrier);
 }
 
 - (void)endEncoding
@@ -351,27 +390,47 @@ MTL_UNSUPPORTED_CLASS
 	_encoder->dispatchThreadgroups(MTLBufferGetIndium(indirectBuffer), indirectBufferOffset, MTLSizeToIndium(threadsPerThreadgroup));
 }
 
-// Every resource is resident for the GPU, so telling the encoder which ones the commands use changes nothing.
-// What the application bound or put in a buffer still has to be alive until the command buffer completes, as
-// with Metal, since a resource is only kept alive by the encoder when it is bound.
+// Every resource is resident for the GPU, so the residency itself needs nothing. What the commands that follow
+// reach through an argument buffer or a heap is not visible to Indium, so it is declared to the encoder, which
+// orders the commands that use those resources. A resource that is not tracked gets no ordering from it.
 - (void)useResource: (id<MTLResource>)resource
               usage: (MTLResourceUsage)usage
 {
+	if (auto indiumResource = MTLResourceGetIndium(resource)) {
+		_encoder->useResource(std::move(indiumResource), static_cast<Indium::ResourceUsage>(usage));
+	}
 }
 
 - (void)useResources: (const id<MTLResource> __nonnull [__nonnull])resources
                count: (NSUInteger)count
                usage: (MTLResourceUsage)usage
 {
+	_encoder->useResources(MTLResourcesGetIndium(resources, count), static_cast<Indium::ResourceUsage>(usage));
 }
 
 - (void)useHeap: (id<MTLHeap>)heap
 {
+	if (auto& indiumHeap = MTLHeapGetIndium(heap)) {
+		_encoder->useHeap(indiumHeap);
+	}
 }
 
 - (void)useHeaps: (const id<MTLHeap> __nonnull [__nonnull])heaps
            count: (NSUInteger)count
 {
+	_encoder->useHeaps(MTLHeapsGetIndium(heaps, count));
+}
+
+// MTLBarrierScope has the same bit values as Indium's BarrierScope.
+- (void)memoryBarrierWithScope: (MTLBarrierScope)scope
+{
+	_encoder->memoryBarrier(static_cast<Indium::BarrierScope>(scope));
+}
+
+- (void)memoryBarrierWithResources: (const id<MTLResource> __nonnull [__nonnull])resources
+                             count: (NSUInteger)count
+{
+	_encoder->memoryBarrier(MTLResourcesGetIndium(resources, count));
 }
 
 #else

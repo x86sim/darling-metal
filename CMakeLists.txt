@@ -88,18 +88,21 @@ add_framework(Metal
 		src/Metal/MTLArgument.mm
 		src/Metal/MTLArgumentDescriptor.mm
 		src/Metal/MTLBinaryArchive.mm
+		src/Metal/MTLBlitPass.mm
 		src/Metal/MTLBlitCommandEncoder.mm
 		src/Metal/MTLBuffer.mm
 		src/Metal/MTLCaptureManager.mm
 		src/Metal/MTLCommandBuffer.mm
+		src/Metal/MTLParallelRenderCommandEncoder.mm
 		src/Metal/MTLCommandBufferDescriptor.mm
 		src/Metal/MTLCommandQueue.mm
 		src/Metal/MTLCompileOptions.mm
 		src/Metal/MTLComputeCommandEncoder.mm
 		src/Metal/MTLComputePipeline.mm
-		src/Metal/MTLCounterSampleBuffer.mm
+		src/Metal/MTLCounters.mm
 		src/Metal/MTLDepthStencilDescriptor.mm
 		src/Metal/MTLDevice.mm
+		src/Metal/MTLDiagnostics.mm
 		src/Metal/MTLDrawable.mm
 		src/Metal/MTLEvent.mm
 		src/Metal/MTLFence.mm

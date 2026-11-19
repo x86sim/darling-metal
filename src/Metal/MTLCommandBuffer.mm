@@ -3,12 +3,14 @@
 
 #import <Metal/MTLCommandBufferInternal.h>
 #import <Metal/MTLBlitCommandEncoderInternal.h>
+#import <Metal/MTLBlitPassInternal.h>
 #import <Metal/MTLComputeCommandEncoderInternal.h>
 #import <Metal/MTLDevice.h>
 #import <Metal/MTLCommandQueue.h>
 #import <Metal/MTLDrawableInternal.h>
 #import <Metal/stubs.h>
 #import <Metal/MTLRenderCommandEncoderInternal.h>
+#import <Metal/MTLParallelRenderCommandEncoderInternal.h>
 #import <Metal/MTLIOSurfaceCopy.h>
 #import <Metal/MTLEventInternal.h>
 
@@ -245,9 +247,27 @@ static CFTimeInterval MTLLoadTime(uint64_t* slot)
 	return [[[MTLRenderCommandEncoderInternal alloc] initWithEncoder: encoder device: _device] autorelease];
 }
 
+- (id<MTLParallelRenderCommandEncoder>)parallelRenderCommandEncoderWithDescriptor: (MTLRenderPassDescriptor*)renderPassDescriptor
+{
+	auto encoder = _commandBuffer->parallelRenderCommandEncoder([renderPassDescriptor asIndiumDescriptor]);
+	if (!encoder) {
+		return nil;
+	}
+	return [[[MTLParallelRenderCommandEncoderInternal alloc] initWithEncoder: encoder device: _device] autorelease];
+}
+
 - (id<MTLBlitCommandEncoder>)blitCommandEncoder
 {
 	auto encoder = _commandBuffer->blitCommandEncoder();
+	if (!encoder) {
+		return nil;
+	}
+	return [[[MTLBlitCommandEncoderInternal alloc] initWithEncoder: encoder device: _device] autorelease];
+}
+
+- (id<MTLBlitCommandEncoder>)blitCommandEncoderWithDescriptor: (MTLBlitPassDescriptor*)blitPassDescriptor
+{
+	auto encoder = _commandBuffer->blitCommandEncoder(blitPassDescriptor.asIndiumDescriptor);
 	if (!encoder) {
 		return nil;
 	}
@@ -308,11 +328,9 @@ static CFTimeInterval MTLLoadTime(uint64_t* slot)
 
 - (void)enqueue
 {
-	// Metal defines -enqueue as reserving the buffer's place in the queue's execution order. Indium
-	// records no queue position: it submits a buffer's work when it is committed, so buffers run in
-	// commit order. This is exact when callers commit in the order they enqueued, which is the usual
-	// pattern. A caller that enqueues A then B and commits B first gets B's work submitted first;
-	// honouring that needs an ordering record in Indium's command queue.
+	// Reserves the buffer's place in the queue's execution order: the buffers of a queue run in the order they were
+	// enqueued, whatever the order they are committed in.
+	_commandBuffer->enqueue();
 
 	MTLCommandBufferStatus expected = MTLCommandBufferStatusNotEnqueued;
 	__atomic_compare_exchange_n(&_status, &expected, MTLCommandBufferStatusEnqueued, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);

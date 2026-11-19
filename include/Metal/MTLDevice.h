@@ -12,6 +12,7 @@
 #import <Metal/MTLDefines.h>
 #import <Metal/MTLEvent.h>
 #import <Metal/MTLFence.h>
+#import <Metal/MTLCounters.h>
 
 METAL_DECLARATIONS_BEGIN
 
@@ -34,6 +35,8 @@ typedef struct MTLSizeAndAlign {
 @protocol MTLHeap;
 @class MTLHeapDescriptor;
 @protocol MTLCounterSet;
+@protocol MTLCounterSampleBuffer;
+@class MTLCounterSampleBufferDescriptor;
 
 @class MTLCompileOptions;
 @class MTLComputePipelineDescriptor;
@@ -60,6 +63,11 @@ typedef NS_ENUM(NSUInteger, MTLDeviceLocation) {
 
 typedef __autoreleasing MTLComputePipelineReflection* MTLAutoreleasedComputePipelineReflection;
 typedef __autoreleasing MTLRenderPipelineReflection* MTLAutoreleasedRenderPipelineReflection;
+
+typedef void (^MTLNewComputePipelineStateCompletionHandler)(id<MTLComputePipelineState> computePipelineState, NSError* error);
+typedef void (^MTLNewComputePipelineStateWithReflectionCompletionHandler)(id<MTLComputePipelineState> computePipelineState, MTLComputePipelineReflection* reflection, NSError* error);
+typedef void (^MTLNewRenderPipelineStateCompletionHandler)(id<MTLRenderPipelineState> renderPipelineState, NSError* error);
+typedef void (^MTLNewRenderPipelineStateWithReflectionCompletionHandler)(id<MTLRenderPipelineState> renderPipelineState, MTLRenderPipelineReflection* reflection, NSError* error);
 
 typedef NSString* MTLDeviceNotificationName;
 typedef void (^MTLDeviceNotificationHandler)(id<MTLDevice> device, MTLDeviceNotificationName notifyName);
@@ -151,6 +159,15 @@ typedef NS_ENUM(NSUInteger, MTLReadWriteTextureTier) {
 
 typedef uint64_t MTLTimestamp;
 
+// The points in a pass at which a device can take a counter sample.
+typedef NS_ENUM(NSUInteger, MTLCounterSamplingPoint) {
+	MTLCounterSamplingPointAtStageBoundary = 0,
+	MTLCounterSamplingPointAtDrawBoundary = 1,
+	MTLCounterSamplingPointAtDispatchBoundary = 2,
+	MTLCounterSamplingPointAtTileDispatchBoundary = 3,
+	MTLCounterSamplingPointAtBlitBoundary = 4,
+};
+
 @protocol MTLDevice <NSObject>
 
 @property(readonly, nonnull) NSString* name;
@@ -160,6 +177,8 @@ typedef uint64_t MTLTimestamp;
 @property(readonly, getter=isRemovable) BOOL removable;
 @property(readonly) BOOL hasUnifiedMemory;
 @property(readonly) uint64_t recommendedMaxWorkingSetSize;
+// The bytes of memory currently allocated for the device's buffers, textures and heaps.
+@property(readonly) NSUInteger currentAllocatedSize;
 @property(readonly) NSUInteger maxBufferLength;
 @property(readonly, getter=isDepth24Stencil8PixelFormatSupported) BOOL depth24Stencil8PixelFormatSupported;
 @property(readonly) MTLReadWriteTextureTier readWriteTextureSupport;
@@ -191,7 +210,7 @@ typedef uint64_t MTLTimestamp;
 /* For a built-in GPU 0 when it is the low-power one and 1 otherwise; 0 for other locations. */
 @property(readonly) NSUInteger locationNumber;
 
-/* nil: indium offers no GPU counter sets. */
+/* The counter sets the device can sample: only the timestamp set, and none where the device cannot sample timestamps. */
 @property(readonly, nullable) NSArray<id<MTLCounterSet>>* counterSets;
 
 /* Reports Tier 1 argument buffers support (baseline tier). indium does not
@@ -226,6 +245,26 @@ typedef uint64_t MTLTimestamp;
                                                            options: (MTLPipelineOption)options
                                                         reflection: (MTLAutoreleasedRenderPipelineReflection*)reflection
                                                              error: (NSError**)error;
+
+/* The asynchronous variants create the pipeline state on another thread and call the handler exactly once, on a thread of
+ * their own (not the caller's), with either the state or an error. */
+- (void)newComputePipelineStateWithFunction: (id<MTLFunction>)computeFunction
+                          completionHandler: (MTLNewComputePipelineStateCompletionHandler)completionHandler;
+
+- (void)newComputePipelineStateWithFunction: (id<MTLFunction>)computeFunction
+                                    options: (MTLPipelineOption)options
+                          completionHandler: (MTLNewComputePipelineStateWithReflectionCompletionHandler)completionHandler;
+
+- (void)newComputePipelineStateWithDescriptor: (MTLComputePipelineDescriptor*)descriptor
+                                      options: (MTLPipelineOption)options
+                            completionHandler: (MTLNewComputePipelineStateWithReflectionCompletionHandler)completionHandler;
+
+- (void)newRenderPipelineStateWithDescriptor: (MTLRenderPipelineDescriptor*)descriptor
+                           completionHandler: (MTLNewRenderPipelineStateCompletionHandler)completionHandler;
+
+- (void)newRenderPipelineStateWithDescriptor: (MTLRenderPipelineDescriptor*)descriptor
+                                     options: (MTLPipelineOption)options
+                           completionHandler: (MTLNewRenderPipelineStateWithReflectionCompletionHandler)completionHandler;
 
 - (id<MTLTexture>)newTextureWithDescriptor: (MTLTextureDescriptor*)descriptor;
 
@@ -263,14 +302,36 @@ typedef uint64_t MTLTimestamp;
                                             options: (MTLResourceOptions)options;
 - (MTLSizeAndAlign)heapTextureSizeAndAlignWithDescriptor: (MTLTextureDescriptor*)desc;
 
-// The host and device clocks sampled together, in nanoseconds. Both are the host's monotonic clock here, so
-// the two timestamps are equal and counter sample buffers do not exist for them to be compared with.
+// The host and device clocks sampled together, in nanoseconds. Where the driver cannot correlate the two, both are
+// the host's monotonic clock.
 - (void)sampleTimestamps: (MTLTimestamp*)cpuTimestamp
             gpuTimestamp: (MTLTimestamp*)gpuTimestamp;
+
+// Whether a sample can be taken at `samplingPoint`: stage, dispatch and blit boundaries where the device samples
+// timestamps; never draw or tile dispatch boundaries.
+- (BOOL)supportsCounterSampling: (MTLCounterSamplingPoint)samplingPoint;
+
+// Allocates a sample buffer for the descriptor's counter set. Returns nil and sets MTLCounterErrorDomain's
+// MTLCounterSampleBufferErrorInvalid if the counter set is not one of -counterSets or the sample count is not
+// in 1...4096.
+- (nullable id<MTLCounterSampleBuffer>)newCounterSampleBufferWithDescriptor: (MTLCounterSampleBufferDescriptor*)descriptor
+                                                                      error: (NSError**)error;
 
 - (id<MTLBuffer>)newBufferWithBytes: (const void*)pointer
                              length: (NSUInteger)length
                             options: (MTLResourceOptions)options;
+
+// A buffer over memory the application owns: contents is `pointer` itself, with no copy, and what the CPU and the GPU write
+// to it is seen by both. `pointer` and `length` need not be aligned, and `options` must use the shared or the managed storage mode.
+// `deallocator`, if not nil, is called with the pointer and length once the buffer has been released and the GPU is done
+// with it, on an unspecified thread, and the memory must stay valid until then. nil (and no deallocator call) for a null
+// pointer, a length of 0 or another storage mode. If the device cannot import the memory, the buffer has memory of its own
+// that is copied from `pointer` when a command buffer is committed and back when one completes, and a warning is printed
+// to stderr once.
+- (nullable id<MTLBuffer>)newBufferWithBytesNoCopy: (void*)pointer
+                                            length: (NSUInteger)length
+                                           options: (MTLResourceOptions)options
+                                       deallocator: (void (^ _Nullable)(void* pointer, NSUInteger length))deallocator;
 
 - (id<MTLLibrary>)newDefaultLibrary;
 
