@@ -152,7 +152,7 @@ int main(void) {
         {
             Indium::LibraryReflection reflection;
             NSString* err = nil;
-            NSString* doc = @"{\"stage\":\"vertex\",\"entry_point\":\"v\",\"bindings\":["
+            NSString* doc = @"{\"reflection_version\":1,\"stage\":\"vertex\",\"entry_point\":\"v\",\"bindings\":["
                 "{\"kind\":\"VertexInput\",\"metal_index\":2,\"location\":2,\"name\":\"position\"}]}";
             ok("a VertexInput binding on a vertex function is accepted", read(doc, reflection, err));
             for (const auto& e : reflection.functions) {
@@ -170,56 +170,138 @@ int main(void) {
         LOG("  negative controls");
 
         expectRejected("a Texture binding, which carries no access type",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Texture\",\"metal_index\":0,\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
         expectRejected("a Sampler binding on a descriptor set its stage does not own",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Sampler\",\"metal_index\":0,\"descriptor\":{\"set\":1,\"binding\":0}}]}");
 
         expectRejected("a VertexInput binding on a kernel",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"VertexInput\",\"metal_index\":0,\"location\":0}]}");
 
         expectRejected("a VertexInput binding with no attribute index",
-            @"{\"stage\":\"vertex\",\"entry_point\":\"v\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"vertex\",\"entry_point\":\"v\",\"bindings\":["
             "{\"kind\":\"VertexInput\",\"location\":0}]}");
 
         expectRejected("a binding of unknown kind",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"AccelerationStructure\",\"metal_index\":0,\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
         expectRejected("a fractional metal_index, which must not be rounded to 2",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Buffer\",\"metal_index\":2.5,\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
         expectRejected("a negative metal_index",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Buffer\",\"metal_index\":-1,\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
+        // ------------------------------------------- sample count constant
+        LOG("  sample count");
+        {
+            Indium::LibraryReflection reflection;
+            NSString* err = nil;
+            NSString* doc = [[realDocument() stringByReplacingOccurrencesOfString: @"\"kernel\""
+                                                                      withString: @"\"fragment\""]
+                stringByReplacingOccurrencesOfString: @"\"local_size\""
+                                          withString: @"\"num_samples_spec_id\": 262147,\n\t\"local_size\""];
+            ok("num_samples_spec_id is accepted", read(doc, reflection, err));
+            for (const auto& e : reflection.functions) {
+                ok("and reads back as the sample count's specialization ID",
+                   e.second.numSamplesSpecializationID && *e.second.numSamplesSpecializationID == 262147);
+            }
+        }
+        {
+            Indium::LibraryReflection reflection;
+            NSString* err = nil;
+            ok("a document without it is read", read(realDocument(), reflection, err));
+            for (const auto& e : reflection.functions) {
+                ok("and has no sample count constant", !e.second.numSamplesSpecializationID);
+            }
+        }
+        expectRejected("a num_samples_spec_id that is a string",
+            @"{\"reflection_version\":1,\"stage\":\"fragment\",\"entry_point\":\"f\",\"num_samples_spec_id\":\"262147\",\"bindings\":[]}");
+
+        // --------------------------------------------------- function constants
+        LOG("  function constants");
+        {
+            Indium::LibraryReflection reflection;
+            NSString* err = nil;
+            NSString* doc = [realDocument() stringByReplacingOccurrencesOfString: @"\"local_size\""
+                withString: @"\"function_constants\": [\n"
+                    "\t\t{ \"name\": \"useMask\", \"type\": \"bool\", \"index\": 0, \"spec_id\": 65536, \"defined_spec_id\": 131072 },\n"
+                    "\t\t{ \"name\": \"scale\", \"type\": \"float\", \"index\": 4, \"spec_id\": 65540, \"defined_spec_id\": 131076 }\n"
+                    "\t],\n\t\"local_size\""];
+            ok("function_constants is accepted", read(doc, reflection, err));
+            ok("and the document still has its one function", reflection.functions.size() == 1);
+            for (const auto& e : reflection.functions) {
+                const auto& constants = e.second.functionConstants;
+                ok("and reads back both constants with their names, types, indices and SpecIds",
+                   constants.size() == 2
+                   && constants[0].name == "useMask" && constants[0].type == Indium::FunctionConstantType::Bool
+                   && constants[0].index == 0 && constants[0].specializationID == 65536 && constants[0].definedSpecializationID == 131072
+                   && constants[1].name == "scale" && constants[1].type == Indium::FunctionConstantType::Float
+                   && constants[1].index == 4 && constants[1].specializationID == 65540 && constants[1].definedSpecializationID == 131076);
+            }
+        }
+        // a constant indium cannot specialize makes only the function reading it unusable: the reader that
+        // a library is made with keeps the function, leaves the constant out and says why it cannot be used
+        {
+            Indium::LibraryReflection reflection;
+            std::map<std::string, std::string> unusable;
+            NSString* err = nil;
+            NSString* doc = [realDocument() stringByReplacingOccurrencesOfString: @"\"local_size\""
+                withString: @"\"function_constants\": [\n"
+                    "\t\t{ \"name\": \"h\", \"type\": \"half\", \"index\": 0, \"spec_id\": 65536, \"defined_spec_id\": 131072 },\n"
+                    "\t\t{ \"name\": \"n\", \"type\": \"uint\", \"index\": 1, \"spec_id\": 65537, \"defined_spec_id\": 131073 }\n"
+                    "\t],\n\t\"local_size\""];
+            bool accepted = MTLReadMSLReflection([doc UTF8String], [doc lengthOfBytesUsingEncoding: NSUTF8StringEncoding],
+                                                 reflection, unusable, err);
+            ok("a half function constant leaves the document readable for a library", accepted && reflection.functions.size() == 1);
+            for (const auto& e : reflection.functions) {
+                ok("and only the supported constant is kept",
+                   e.second.functionConstants.size() == 1 && e.second.functionConstants[0].name == "n");
+                ok("and the function is listed as unusable, naming the constant and its type",
+                   unusable.size() == 1 && unusable.count(e.first) == 1
+                   && unusable[e.first].find("'h'") != std::string::npos && unusable[e.first].find("half") != std::string::npos);
+            }
+        }
+
+        // the refusals start from mslc's real document, so the only thing wrong with each is its constant
+        expectRejected("a half function constant, by the reader that has nowhere to list an unusable function",
+            [realDocument() stringByReplacingOccurrencesOfString: @"\"local_size\""
+                withString: @"\"function_constants\": [{ \"name\": \"h\", \"type\": \"half\", \"index\": 0, \"spec_id\": 65536, \"defined_spec_id\": 131072 }],\n\t\"local_size\""]);
+        expectRejected("a function constant with no spec_id",
+            [realDocument() stringByReplacingOccurrencesOfString: @"\"local_size\""
+                withString: @"\"function_constants\": [{ \"name\": \"c\", \"type\": \"int\", \"index\": 0, \"defined_spec_id\": 131072 }],\n\t\"local_size\""]);
+        expectRejected("function_constants that is not an array",
+            [realDocument() stringByReplacingOccurrencesOfString: @"\"local_size\""
+                withString: @"\"function_constants\": 3,\n\t\"local_size\""]);
+
         expectRejected("a string where an index belongs",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Buffer\",\"metal_index\":\"0\",\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
         expectRejected("a binding with no descriptor",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Buffer\",\"metal_index\":0}]}");
 
         expectRejected("a binding with no metal_index",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":["
             "{\"kind\":\"Buffer\",\"descriptor\":{\"set\":0,\"binding\":0}}]}");
 
         expectRejected("no bindings array",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"k\"}");
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\"}");
 
         expectRejected("no entry point",
-            @"{\"stage\":\"kernel\",\"bindings\":[]}");
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"bindings\":[]}");
 
         expectRejected("an empty entry point name",
-            @"{\"stage\":\"kernel\",\"entry_point\":\"\",\"bindings\":[]}");
+            @"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"\",\"bindings\":[]}");
 
         expectRejected("no stage",
-            @"{\"entry_point\":\"k\",\"bindings\":[]}");
+            @"{\"reflection_version\":1,\"entry_point\":\"k\",\"bindings\":[]}");
 
         expectRejected("a document that is a JSON array, not an object",
             @"[{\"stage\":\"kernel\"}]");
@@ -227,6 +309,10 @@ int main(void) {
         expectRejected("a document that is not JSON at all", @"this is not json");
 
         expectRejected("an empty document", @"");
+        expectRejected("a document with no reflection_version",
+            @"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":[]}");
+        expectRejected("a reflection_version this reader does not know",
+            @"{\"reflection_version\":3,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":[]}");
 
         // The last one has to hold for the whole suite: a reflection of no
         // functions is what indium refuses with "reflection describes no
@@ -235,7 +321,7 @@ int main(void) {
         {
             Indium::LibraryReflection reflection;
             NSString* err = nil;
-            BOOL accepted = read(@"{\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":[]}",
+            BOOL accepted = read(@"{\"reflection_version\":1,\"stage\":\"kernel\",\"entry_point\":\"k\",\"bindings\":[]}",
                                  reflection, err);
             ok("a document with no bindings is read, and carries one empty function",
                accepted && reflection.functions.size() == 1
